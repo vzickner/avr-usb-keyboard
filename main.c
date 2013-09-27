@@ -173,7 +173,7 @@ int main(void) {
 	DBG1(0x01, 0, 0);       /* debug output: main loop starts */
 	DDRC = 0x00;
 	DDRA = 0xff;
-	PORTA = 0x00 | (1<<PA7);
+	PORTA = 0x00;
 
 	int8_t rotateValue = 0;
 	uint8_t pinC = 0x1F;
@@ -198,7 +198,7 @@ int main(void) {
 		//reportBuffer.mod = MOD_SHIFT_LEFT;
 		//reportBuffer.key = KEY_A + (PINC & 0x0F);
 
-		if (counter > 0x3FF && counter < 0x4FF && beep == 1) {
+		if (counter > 0x1FF && counter < 0x2FF && beep == 1) {
 			PORTA |= (1<<PA6);
 		} else {
 			PORTA &= (0<<PA6);
@@ -215,17 +215,34 @@ int main(void) {
 		}
 		if (use == 1) {
 			last = first;
+			if (counter > 0x1FF && beep == 0) {
+				if (last == 0x1C) {
+					PORTA |= (1<<PA6);
+					beep = 1;
+					PORTA &= (0<<PA7);
+					_delay_ms(1);
+					_delay_ms(1);
+					_delay_ms(1);
+					PORTA |= (1<<PA7);
+				}
+				if (last == 0x13) {
+					PORTA |= (1<<PA6);
+					beep = 1;
+					sendStack[sendStackAdd] = 0x50;
+					sendStackAdd = (sendStackAdd+1)&0x03;
+				}
+			}
 		}
 		if (last != pinC) {
 			sendStack[sendStackAdd] = KEY_A;
 			if (pinC != 0x1F) {
 //			PORTA |= (1<<PA6);
-				if (counter < 0x3FF) {
+				if (counter < 0x1FF) {
 					sendStack[sendStackAdd] = (pinC & 0x1F);
 				} else {
 					sendStack[sendStackAdd] = 0x20 + (pinC & 0x1F);
 				}
-				sendStackAdd = (sendStackAdd+1)&0x1F;
+				sendStackAdd = (sendStackAdd+1)&0x03;
 				beep = 0;
 			} else {
 				beep = 1;
@@ -237,11 +254,11 @@ int main(void) {
 		rotateC = PINC & 0x60;
 		if (rotateC != rotateLast) {
 			if (rotateLast == 0x40 && rotateC == 0x60) {
-				sendStack[sendStackAdd] = KEY_H;
-				sendStackAdd = (sendStackAdd+1)&0x1F;
+				sendStack[sendStackAdd] = 0x40;
+				sendStackAdd = (sendStackAdd+1)&0x03;
 			} else if (rotateLast == 0x20 && rotateC == 0x60) {
-				sendStack[sendStackAdd] = KEY_G;
-				sendStackAdd = (sendStackAdd+1)&0x1F;
+				sendStack[sendStackAdd] = 0x41;
+				sendStackAdd = (sendStackAdd+1)&0x03;
 			}
 			rotateLast = rotateC;
 		}
@@ -251,9 +268,61 @@ int main(void) {
 			reportBuffer.key = 0;
 
 			if (sendStackSend != sendStackAdd) {
-				reportBuffer.mod = MOD_SHIFT_LEFT;
-				reportBuffer.key = sendStack[sendStackSend];
-				sendStackSend = (sendStackSend+1)&0x1F;
+				switch (sendStack[sendStackSend]) {
+				case 0x1E: // button 1 short
+					reportBuffer.mod = MOD_SHIFT_LEFT | MOD_CONTROL_LEFT;
+					reportBuffer.key = KEY_TAB;
+					break;
+				case 0x1D: // button 2 short
+					reportBuffer.mod = MOD_CONTROL_LEFT;
+					reportBuffer.key = KEY_TAB;
+					break;
+				case 0x1B: // button 3 short
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_UP_ARROW;
+					break;
+				case 0x17: // button 4 short
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_DOWN_ARROW;
+					break;
+				case 0x0F: // button 5 short
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_RETURN;
+					break;
+				case 0x3E: // button 1 long
+					reportBuffer.mod = MOD_CONTROL_LEFT;
+					reportBuffer.key = KEY_W;
+					break;
+				case 0x3D: // button 2 long
+					reportBuffer.mod = MOD_SHIFT_LEFT | MOD_CONTROL_LEFT;
+					reportBuffer.key = KEY_RETURN;
+					break;
+				case 0x3B: // button 3 long
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_F5;
+					break;
+				case 0x37: // button 4 long
+					reportBuffer.mod = MOD_ALT_LEFT;
+					reportBuffer.key = KEY_POS1;
+					break;
+				case 0x2F: // button 5 long
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_RETURN;
+					break;
+				case 0x41: // rotate right
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_TAB;
+					break;
+				case 0x40: // rotate left
+					reportBuffer.mod = MOD_SHIFT_LEFT;
+					reportBuffer.key = KEY_TAB;
+					break;
+				case 0x50: // shutdown
+					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_ALT_LEFT;
+					reportBuffer.key = KEY_BACKSPACE;
+					break;
+				}
+				sendStackSend = (sendStackSend+1)&0x03;
 			}
 			DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
 			usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));

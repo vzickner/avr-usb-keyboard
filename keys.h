@@ -1,4 +1,4 @@
-
+// http://www.freebsddiary.org/APC/usb_hid_usages.php
 #define MOD_CONTROL_LEFT    (1<<0)
 #define MOD_SHIFT_LEFT      (1<<1)
 #define MOD_ALT_LEFT        (1<<2)
@@ -49,7 +49,7 @@
 #define KEY_F2      59
 #define KEY_F3      60
 #define KEY_F4      61
-#define KEY_F5      62
+#define KEY_F5      0x3E
 #define KEY_F6      63
 #define KEY_F7      64
 #define KEY_F8      65
@@ -58,3 +58,9 @@
 #define KEY_F11     68
 #define KEY_F12     69
 
+#define KEY_TAB	0x2b
+#define KEY_DOWN_ARROW	0x51
+#define KEY_UP_ARROW	0x52
+#define KEY_RETURN	0x28
+#define KEY_POS1	0x4A
+#define KEY_BACKSPACE	0x2A
