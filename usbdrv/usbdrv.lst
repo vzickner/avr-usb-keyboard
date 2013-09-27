@@ -1420,32 +1420,32 @@
  781               		.file 3 "usbdrv/usbdrv.h"
 DEFINED SYMBOLS
                             *ABS*:0000000000000000 usbdrv.c
-     /tmp/ccXxlLgO.s:2      *ABS*:000000000000003e __SP_H__
-     /tmp/ccXxlLgO.s:3      *ABS*:000000000000003d __SP_L__
-     /tmp/ccXxlLgO.s:4      *ABS*:000000000000003f __SREG__
-     /tmp/ccXxlLgO.s:5      *ABS*:0000000000000000 __tmp_reg__
-     /tmp/ccXxlLgO.s:6      *ABS*:0000000000000001 __zero_reg__
-     /tmp/ccXxlLgO.s:11     .text:0000000000000000 usbSetInterrupt
+     /tmp/ccKhOlYP.s:2      *ABS*:000000000000003e __SP_H__
+     /tmp/ccKhOlYP.s:3      *ABS*:000000000000003d __SP_L__
+     /tmp/ccKhOlYP.s:4      *ABS*:000000000000003f __SREG__
+     /tmp/ccKhOlYP.s:5      *ABS*:0000000000000000 __tmp_reg__
+     /tmp/ccKhOlYP.s:6      *ABS*:0000000000000001 __zero_reg__
+     /tmp/ccKhOlYP.s:11     .text:0000000000000000 usbSetInterrupt
                             *COM*:000000000000000c usbTxStatus1
-     /tmp/ccXxlLgO.s:84     .text:0000000000000046 usbPoll
+     /tmp/ccKhOlYP.s:84     .text:0000000000000046 usbPoll
                             *COM*:0000000000000001 usbRxLen
                             *COM*:0000000000000001 usbInputBufOffset
                             *COM*:0000000000000001 usbRxToken
                             *COM*:0000000000000016 usbRxBuf
                             *COM*:000000000000000b usbTxBuf
-     /tmp/ccXxlLgO.s:703    .data:0000000000000000 usbTxLen
+     /tmp/ccKhOlYP.s:703    .data:0000000000000000 usbTxLen
                              .bss:0000000000000000 usbMsgFlags
                             *COM*:0000000000000001 usbNewDeviceAddr
-     /tmp/ccXxlLgO.s:644    .progmem.data:0000000000000022 usbDescriptorDevice
-     /tmp/ccXxlLgO.s:606    .progmem.data:0000000000000000 usbDescriptorConfiguration
+     /tmp/ccKhOlYP.s:644    .progmem.data:0000000000000022 usbDescriptorDevice
+     /tmp/ccKhOlYP.s:606    .progmem.data:0000000000000000 usbDescriptorConfiguration
                             *COM*:0000000000000002 usbMsgPtr
-     /tmp/ccXxlLgO.s:691    .progmem.data:0000000000000056 usbDescriptorString0
-     /tmp/ccXxlLgO.s:678    .progmem.data:0000000000000044 usbDescriptorStringVendor
-     /tmp/ccXxlLgO.s:666    .progmem.data:0000000000000034 usbDescriptorStringDevice
+     /tmp/ccKhOlYP.s:691    .progmem.data:0000000000000056 usbDescriptorString0
+     /tmp/ccKhOlYP.s:678    .progmem.data:0000000000000044 usbDescriptorStringVendor
+     /tmp/ccKhOlYP.s:666    .progmem.data:0000000000000034 usbDescriptorStringDevice
                             *COM*:0000000000000001 usbConfiguration
-     /tmp/ccXxlLgO.s:715    .data:0000000000000001 usbMsgLen
+     /tmp/ccKhOlYP.s:715    .data:0000000000000001 usbMsgLen
                             *COM*:0000000000000001 usbDeviceAddr
-     /tmp/ccXxlLgO.s:574    .text:000000000000024c usbInit
+     /tmp/ccKhOlYP.s:574    .text:000000000000024c usbInit
                             *COM*:0000000000000001 usbCurrentTok
 
 UNDEFINED SYMBOLS

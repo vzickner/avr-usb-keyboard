@@ -38,7 +38,7 @@
 
 
 # MCU name
-MCU = atmega32
+MCU = atmega16
 
 # Main Oscillator Frequency
 # This is only used to define F_OSC in all assembler and c-sources.
@@ -178,7 +178,8 @@ LDFLAGS += $(PRINTF_LIB) $(SCANF_LIB) $(MATH_LIB)
 # Type: avrdude -c ?
 # to get a full listing.
 #
-AVRDUDE_PROGRAMMER = stk500
+AVRDUDE_PROGRAMMER = usbasp
+#AVRDUDE_PROGRAMMER = stk500
 
 # com1 = serial port. Use lpt1 to connect to parallel port.
 AVRDUDE_PORT = /dev/parport0    # programmer connected to serial device
