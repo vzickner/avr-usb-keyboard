@@ -1,107 +1,41 @@
 /* Name: main.c
- * Project: HID-Test
+ * Project: hid-mouse, a very simple HID example
  * Author: Christian Starkjohann
- * Creation Date: 2006-02-02
+ * Creation Date: 2008-04-07
  * Tabsize: 4
- * Copyright: (c) 2006 by OBJECTIVE DEVELOPMENT Software GmbH
- * License: GNU GPL v2 (see License.txt) or proprietary (CommercialLicense.txt)
- * This Revision: $Id$
+ * Copyright: (c) 2008 by OBJECTIVE DEVELOPMENT Software GmbH
+ * License: GNU GPL v2 (see License.txt), GNU GPL v3 or proprietary (CommercialLicense.txt)
+ * This Revision: $Id: main.c 692 2008-11-07 15:07:40Z cs $
  */
 
-#include <avr/io.h>
-#include <avr/interrupt.h>
-#include <avr/pgmspace.h>
-#include <avr/wdt.h>
+/*
+This example should run on most AVRs with only little changes. No special
+hardware resources except INT0 are used. You may have to change usbconfig.h for
+different I/O pins for USB. Please note that USB D+ must be the INT0 pin, or
+at least be connected to INT0 as well.
 
-#include "usbdrv.h"
-#include "oddebug.h"
-
-/* ----------------------- hardware I/O abstraction ------------------------ */
-
-/* pin assignments:
-PB0	Key 1
-PB1	Key 2
-PB2	Key 3
-PB3	Key 4
-PB4	Key 5
-PB5 Key 6
-
-PC0	Key 7
-PC1	Key 8
-PC2	Key 9
-PC3	Key 10
-PC4	Key 11
-PC5	Key 12
-
-PD0	USB-
-PD1	debug tx
-PD2	USB+ (int0)
-PD3	Key 13
-PD4	Key 14
-PD5	Key 15
-PD6	Key 16
-PD7	Key 17
+We use VID/PID 0x046D/0xC00E which is taken from a Logitech mouse. Don't
+publish any hardware using these IDs! This is for demonstration only!
 */
 
-static void hardwareInit(void) {
-	uchar	i, j;
+#include <avr/io.h>
+#include <avr/wdt.h>
+#include <avr/interrupt.h>  /* for sei() */
+#include <util/delay.h>     /* for _delay_ms() */
 
-	PORTC = 0xff;   /* activate all pull-ups */
-	DDRC = 0;       /* all pins input */
-	PORTD = 0xfa;   /* 1111 1010 bin: activate pull-ups except on USB lines */
-	DDRD = 0x07;    /* 0000 0111 bin: all pins input except USB (-> USB reset) */
-	j = 0;
-	while (--j) {     /* USB Reset by device only required on Watchdog Reset */
-		i = 0;
-		while(--i); /* delay >10ms for USB reset */
-	}
-	DDRD = 0x02;    /* 0000 0010 bin: remove USB reset condition */
-	/* configure timer 0 for a rate of 12M/(1024 * 256) = 45.78 Hz (~22ms) */
-	TCCR0 = 5;      /* timer 0 prescaler: 1024 */
-}
-
-/* ------------------------------------------------------------------------- */
+#include <avr/pgmspace.h>   /* required by usbdrv.h */
+#include "usbdrv.h"
+#include "oddebug.h"        /* This is also an example for using debug macros */
+#include "keys.h"
 
 #define NUM_KEYS    17
 
-/* The following function returns an index for the first key pressed. It
- * returns 0 if no key is pressed.
- */
-static uchar keyPressed(void) {
-	uchar   i, mask, x;
-
-	x = PINB;
-	mask = 1;
-	for (i=0;i<6;i++) {
-		if((x & mask) == 0)
-			return i + 1;
-		mask <<= 1;
-	}
-	x = PINC;
-	mask = 1;
-	for (i=0;i<6;i++) {
-		if((x & mask) == 0)
-			return i + 7;
-		mask <<= 1;
-	}
-	x = PIND;
-	mask = 1 << 3;
-	for (i=0;i<5;i++) {
-		if ((x & mask) == 0)
-			return i + 13;
-		mask <<= 1;
-	}
-	return 0;
-}
 
 /* ------------------------------------------------------------------------- */
 /* ----------------------------- USB interface ----------------------------- */
 /* ------------------------------------------------------------------------- */
 
-static uchar    reportBuffer[2];    /* buffer for HID reports */
-static uchar    idleRate;           /* in 4 ms units */
-
-const PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
+PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
     0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
     0x09, 0x06,                    // USAGE (Keyboard)
     0xa1, 0x01,                    // COLLECTION (Application)
@@ -121,167 +55,112 @@ const PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
     0x81, 0x00,                    //   INPUT (Data,Ary,Abs)
     0xc0                           // END_COLLECTION
 };
-/* We use a simplifed keyboard report descriptor which does not support the
- * boot protocol. We don't allow setting status LEDs and we only allow one
- * simultaneous key press (except modifiers). We can therefore use short
- * 2 byte input reports.
- * The report descriptor has been created with usb.org's "HID Descriptor Tool"
- * which can be downloaded from http://www.usb.org/developers/hidpage/.
- * Redundant entries (such as LOGICAL_MINIMUM and USAGE_PAGE) have been omitted
- * for the second INPUT item.
+
+/* This is the same report descriptor as seen in a Logitech mouse. The data
+ * described by this descriptor consists of 4 bytes:
+ *      .  .  .  .  . B2 B1 B0 .... one byte with mouse button states
+ *     X7 X6 X5 X4 X3 X2 X1 X0 .... 8 bit signed relative coordinate x
+ *     Y7 Y6 Y5 Y4 Y3 Y2 Y1 Y0 .... 8 bit signed relative coordinate y
+ *     W7 W6 W5 W4 W3 W2 W1 W0 .... 8 bit signed relative coordinate wheel
  */
+typedef struct{
+	uchar mod;
+	uchar key;
+}report_t;
 
-/* Keyboard usage values, see usb.org's HID-usage-tables document, chapter
- * 10 Keyboard/Keypad Page for more codes.
- */
-#define MOD_CONTROL_LEFT    (1<<0)
-#define MOD_SHIFT_LEFT      (1<<1)
-#define MOD_ALT_LEFT        (1<<2)
-#define MOD_GUI_LEFT        (1<<3)
-#define MOD_CONTROL_RIGHT   (1<<4)
-#define MOD_SHIFT_RIGHT     (1<<5)
-#define MOD_ALT_RIGHT       (1<<6)
-#define MOD_GUI_RIGHT       (1<<7)
+static report_t reportBuffer;
+static int      sinus = 7 << 6, cosinus = 0;
+static uchar    idleRate;   /* repeat rate for keyboards, never used for mice */
 
-#define KEY_A       4
-#define KEY_B       5
-#define KEY_C       6
-#define KEY_D       7
-#define KEY_E       8
-#define KEY_F       9
-#define KEY_G       10
-#define KEY_H       11
-#define KEY_I       12
-#define KEY_J       13
-#define KEY_K       14
-#define KEY_L       15
-#define KEY_M       16
-#define KEY_N       17
-#define KEY_O       18
-#define KEY_P       19
-#define KEY_Q       20
-#define KEY_R       21
-#define KEY_S       22
-#define KEY_T       23
-#define KEY_U       24
-#define KEY_V       25
-#define KEY_W       26
-#define KEY_X       27
-#define KEY_Y       28
-#define KEY_Z       29
-#define KEY_1       30
-#define KEY_2       31
-#define KEY_3       32
-#define KEY_4       33
-#define KEY_5       34
-#define KEY_6       35
-#define KEY_7       36
-#define KEY_8       37
-#define KEY_9       38
-#define KEY_0       39
-
-#define KEY_F1      58
-#define KEY_F2      59
-#define KEY_F3      60
-#define KEY_F4      61
-#define KEY_F5      62
-#define KEY_F6      63
-#define KEY_F7      64
-#define KEY_F8      65
-#define KEY_F9      66
-#define KEY_F10     67
-#define KEY_F11     68
-#define KEY_F12     69
-
-static const uchar  keyReport[NUM_KEYS + 1][2] PROGMEM = {
-	/* none */  {0, 0},                     /* no key pressed */
-	/*  1 */    {MOD_SHIFT_LEFT, KEY_A},
-	/*  2 */    {MOD_SHIFT_LEFT, KEY_B},
-	/*  3 */    {MOD_SHIFT_LEFT, KEY_C},
-	/*  4 */    {MOD_SHIFT_LEFT, KEY_D},
-	/*  5 */    {MOD_SHIFT_LEFT, KEY_E},
-	/*  6 */    {MOD_SHIFT_LEFT, KEY_F},
-	/*  7 */    {MOD_SHIFT_LEFT, KEY_G},
-	/*  8 */    {MOD_SHIFT_LEFT, KEY_H},
-	/*  9 */    {MOD_SHIFT_LEFT, KEY_I},
-	/* 10 */    {MOD_SHIFT_LEFT, KEY_J},
-	/* 11 */    {MOD_SHIFT_LEFT, KEY_K},
-	/* 12 */    {MOD_SHIFT_LEFT, KEY_L},
-	/* 13 */    {MOD_SHIFT_LEFT, KEY_M},
-	/* 14 */    {MOD_SHIFT_LEFT, KEY_N},
-	/* 15 */    {MOD_SHIFT_LEFT, KEY_O},
-	/* 16 */    {MOD_SHIFT_LEFT, KEY_P},
-	/* 17 */    {MOD_SHIFT_LEFT, KEY_Q},
-};
-
-static void buildReport(uchar key) {
-	/* This (not so elegant) cast saves us 10 bytes of program memory */
-	*(int *)reportBuffer = pgm_read_word(keyReport[key]);
-}
-
-uchar usbFunctionSetup(uchar data[8]) {
-	usbRequest_t    *rq = (void *)data;
-
-	usbMsgPtr = reportBuffer;
-	if ((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {    /* class request type */
-		if (rq->bRequest == USBRQ_HID_GET_REPORT) {  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
-			/* we only have one report type, so don't look at wValue */
-			buildReport(keyPressed());
-			return sizeof(reportBuffer);
-		} else if(rq->bRequest == USBRQ_HID_GET_IDLE) {
-			usbMsgPtr = &idleRate;
-			return 1;
-		} else if(rq->bRequest == USBRQ_HID_SET_IDLE) {
-			idleRate = rq->wValue.bytes[1];
-		}
-	} else {
-		/* no vendor specific requests implemented */
-	}
-	return 0;
-}
 
 /* ------------------------------------------------------------------------- */
 
-int main(void) {
-	uchar key, lastKey = 0, keyDidChange = 0;
-	uchar idleCounter = 0;
+usbMsgLen_t usbFunctionSetup(uchar data[8])
+{
+usbRequest_t    *rq = (void *)data;
 
-	wdt_enable(WDTO_2S);
-	hardwareInit();
-	odDebugInit();
-	usbInit();
-	sei();
+    /* The following requests are never used. But since they are required by
+     * the specification, we implement them in this example.
+     */
+    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* class request type */
+        DBG1(0x50, &rq->bRequest, 1);   /* debug output: print our request */
+        if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
+            /* we only have one report type, so don't look at wValue */
+            usbMsgPtr = (void *)&reportBuffer;
+            return sizeof(reportBuffer);
+        }else if(rq->bRequest == USBRQ_HID_GET_IDLE){
+            usbMsgPtr = &idleRate;
+            return 1;
+        }else if(rq->bRequest == USBRQ_HID_SET_IDLE){
+            idleRate = rq->wValue.bytes[1];
+        }
+    }else{
+        /* no vendor specific requests implemented */
+    }
+    return 0;   /* default for not implemented requests: return no data back to host */
+}
 
-	DBG1(0x00, 0, 0);
+static void buildReport(uchar key) {
+        /* This (not so elegant) cast saves us 10 bytes of program memory */
+	reportBuffer.mod = MOD_SHIFT_LEFT;
+	reportBuffer.key = KEY_B;
+//        *(int *)reportBuffer = pgm_read_word(keyReport[key]);
+}
+/* ------------------------------------------------------------------------- */
 
-	for (;;) {	/* main event loop */
-		wdt_reset();
-		usbPoll();
-		key = keyPressed();
-		if (lastKey != key) {
-			lastKey = key;
-			keyDidChange = 1;
-		}
-		if (TIFR & (1<<TOV0)) {   /* 22 ms timer */
-			TIFR = 1<<TOV0;
-			if (idleRate != 0) {
-				if (idleCounter > 4) {
-					idleCounter -= 5;   /* 22 ms in units of 4 ms */
-				} else {
-					idleCounter = idleRate;
-					keyDidChange = 1;
-				}
-			}
-		}
-		if (keyDidChange && usbInterruptIsReady()) {
-			keyDidChange = 0;
-			/* use last key and not current key status in order to avoid lost
-			   changes in key status. */
-			buildReport(lastKey);
-			usbSetInterrupt(reportBuffer, sizeof(reportBuffer));
-		}
+int main(void)
+{
+uchar   i;
+
+    wdt_enable(WDTO_1S);
+    /* Even if you don't use the watchdog, turn it off here. On newer devices,
+     * the status of the watchdog (on/off, period) is PRESERVED OVER RESET!
+     */
+    DBG1(0x00, 0, 0);       /* debug output: main starts */
+    /* RESET status: all port bits are inputs without pull-up.
+     * That's the way we need D+ and D-. Therefore we don't need any
+     * additional hardware initialization.
+     */
+    odDebugInit();
+    usbInit();
+    usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
+    i = 0;
+    while(--i){             /* fake USB disconnect for > 250 ms */
+        wdt_reset();
+        _delay_ms(1);
+    }
+    usbDeviceConnect();
+    sei();
+    DBG1(0x01, 0, 0);       /* debug output: main loop starts */
+	DDRC = 0x00;
+	DDRA = 0xff;
+
+    for(;;){                /* main event loop */
+        DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
+        wdt_reset();
+        usbPoll();
+	reportBuffer.mod = 0;
+	reportBuffer.key = 0;
+
+	if ((PINC & (1 << PC0)) == 0) {
+		reportBuffer.mod = MOD_SHIFT_LEFT;
+		reportBuffer.key = KEY_A;
+		PORTA = 0xff;
+	} else if ((PINC & (1 << PC1)) == 0) {
+		reportBuffer.mod = MOD_SHIFT_LEFT;
+		reportBuffer.key = KEY_B;
+		PORTA = 0xff;
+	} else {
+		PORTA = 0x00;
 	}
-	return 0;
+
+        if(usbInterruptIsReady()) {
+            /* called after every poll of the interrupt endpoint */
+            DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
+            usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));
+        }
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------------- */

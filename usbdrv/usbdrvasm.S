@@ -1,10 +1,11 @@
 /* Name: usbdrvasm.S
- * Project: V-USB, virtual USB port for Atmel's(r) AVR(r) microcontrollers
+ * Project: AVR USB driver
  * Author: Christian Starkjohann
  * Creation Date: 2007-06-13
  * Tabsize: 4
  * Copyright: (c) 2007 by OBJECTIVE DEVELOPMENT Software GmbH
  * License: GNU GPL v2 (see License.txt), GNU GPL v3 or proprietary (CommercialLicense.txt)
+ * Revision: $Id: usbdrvasm.S 692 2008-11-07 15:07:40Z cs $
  */
 
 /*
@@ -25,8 +26,7 @@ the file appropriate for the given clock rate.
 #define cnt     r19
 #define x3      r20
 #define x4      r21
-#define x5		r22
-#define bitcnt  x5
+#define bitcnt  r22
 #define phase   x4
 #define leap    x4
 
@@ -56,11 +56,7 @@ the file appropriate for the given clock rate.
 #else /* __IAR_SYSTEMS_ASM__ */
 
 #   ifndef USB_INTR_VECTOR /* default to hardware interrupt INT0 */
-#       ifdef INT0_vect
-#           define USB_INTR_VECTOR  INT0_vect       // this is the "new" define for the vector
-#       else
-#           define USB_INTR_VECTOR  SIG_INTERRUPT0  // this is the "old" vector
-#       endif
+#       define USB_INTR_VECTOR  SIG_INTERRUPT0
 #   endif
     .text
     .global USB_INTR_VECTOR
@@ -142,93 +138,16 @@ RTMODEL "__rt_version", "3"
 
 #endif
 
-#if USB_USE_FAST_CRC
-
-; This implementation is faster, but has bigger code size
-; Thanks to Slawomir Fras (BoskiDialer) for this code!
-; It implements the following C pseudo-code:
-; unsigned table(unsigned char x)
-; {
-; unsigned    value;
-; 
-;     value = (unsigned)x << 6;
-;     value ^= (unsigned)x << 7;
-;     if(parity(x))
-;         value ^= 0xc001;
-;     return value;
-; }
-; unsigned usbCrc16(unsigned char *argPtr, unsigned char argLen)
-; {
-; unsigned crc = 0xffff;
-; 
-;     while(argLen--)
-;         crc = table(lo8(crc) ^ *argPtr++) ^ hi8(crc);
-;     return ~crc;
-; }
-
-; extern unsigned usbCrc16(unsigned char *argPtr, unsigned char argLen);
-;   argPtr  r24+25 / r16+r17
-;   argLen  r22 / r18
+; extern unsigned usbCrc16(unsigned char *data, unsigned char len);
+; data: r24/25
+; len: r22
 ; temp variables:
-;   byte    r18 / r22
-;   scratch r23
-;   resCrc  r24+r25 / r16+r17
-;   ptr     X / Z
-usbCrc16:
-    mov     ptrL, argPtrL
-    mov     ptrH, argPtrH
-    ldi     resCrcL, 0xFF
-    ldi     resCrcH, 0xFF
-    rjmp    usbCrc16LoopTest
-usbCrc16ByteLoop:
-    ld      byte, ptr+
-    eor     resCrcL, byte   ; resCrcL is now 'x' in table()
-    mov     byte, resCrcL   ; compute parity of 'x'
-    swap    byte
-    eor     byte, resCrcL
-    mov     scratch, byte
-    lsr     byte
-    lsr     byte
-    eor     byte, scratch
-    inc     byte
-    lsr     byte
-    andi    byte, 1         ; byte is now parity(x)
-    mov     scratch, resCrcL
-    mov     resCrcL, resCrcH
-    eor     resCrcL, byte   ; low byte of if(parity(x)) value ^= 0xc001;
-    neg     byte
-    andi    byte, 0xc0
-    mov     resCrcH, byte   ; high byte of if(parity(x)) value ^= 0xc001;
-    clr     byte
-    lsr     scratch
-    ror     byte
-    eor     resCrcH, scratch
-    eor     resCrcL, byte
-    lsr     scratch
-    ror     byte
-    eor     resCrcH, scratch
-    eor     resCrcL, byte
-usbCrc16LoopTest:
-    subi    argLen, 1
-    brsh    usbCrc16ByteLoop
-    com     resCrcL
-    com     resCrcH
-    ret
-
-#else   /* USB_USE_FAST_CRC */
-
-; This implementation is slower, but has less code size
-;
-; extern unsigned usbCrc16(unsigned char *argPtr, unsigned char argLen);
-;   argPtr  r24+25 / r16+r17
-;   argLen  r22 / r18
-; temp variables:
-;   byte    r18 / r22
-;   bitCnt  r19
-;   poly    r20+r21
-;   scratch r23
-;   resCrc  r24+r25 / r16+r17
-;   ptr     X / Z
+;   r18: data byte
+;   r19: bit counter
+;   r20/21: polynomial
+;   r23: scratch
+;   r24/25: crc-sum
+;   r26/27=X: ptr
 usbCrc16:
     mov     ptrL, argPtrL
     mov     ptrH, argPtrH
@@ -236,29 +155,26 @@ usbCrc16:
     ldi     resCrcH, 0
     ldi     polyL, lo8(0xa001)
     ldi     polyH, hi8(0xa001)
-    com     argLen      ; argLen = -argLen - 1: modified loop to ensure that carry is set
-    ldi     bitCnt, 0   ; loop counter with starnd condition = end condition
-    rjmp    usbCrcLoopEntry
-usbCrcByteLoop:
+    com     argLen      ; argLen = -argLen - 1
+crcByteLoop:
+    subi    argLen, -1
+    brcc    crcReady    ; modified loop to ensure that carry is set below
     ld      byte, ptr+
+    ldi     bitCnt, -8  ; strange loop counter to ensure that carry is set where we need it
     eor     resCrcL, byte
-usbCrcBitLoop:
-    ror     resCrcH     ; carry is always set here (see brcs jumps to here)
+crcBitLoop:
+    ror     resCrcH     ; carry is always set here
     ror     resCrcL
-    brcs    usbCrcNoXor
+    brcs    crcNoXor
     eor     resCrcL, polyL
     eor     resCrcH, polyH
-usbCrcNoXor:
-    subi    bitCnt, 224 ; (8 * 224) % 256 = 0; this loop iterates 8 times
-    brcs    usbCrcBitLoop
-usbCrcLoopEntry:
-    subi    argLen, -1
-    brcs    usbCrcByteLoop
-usbCrcReady:
+crcNoXor:
+    subi    bitCnt, -1
+    brcs    crcBitLoop
+    rjmp    crcByteLoop
+crcReady:
     ret
 ; Thanks to Reimar Doeffinger for optimizing this CRC routine!
-
-#endif /* USB_USE_FAST_CRC */
 
 ; extern unsigned usbCrc16Append(unsigned char *data, unsigned char len);
 usbCrc16Append:
@@ -360,33 +276,21 @@ usbMFTimeout:
 ;----------------------------------------------------------------------------
 
 #ifndef USB_CFG_CLOCK_KHZ
-#   ifdef F_CPU
-#       define USB_CFG_CLOCK_KHZ (F_CPU/1000)
-#   else
-#       error "USB_CFG_CLOCK_KHZ not defined in usbconfig.h and no F_CPU set!"
-#   endif
+#   define USB_CFG_CLOCK_KHZ 12000
 #endif
 
-#if USB_CFG_CHECK_CRC   /* separate dispatcher for CRC type modules */
-#   if USB_CFG_CLOCK_KHZ == 18000
-#       include "usbdrvasm18-crc.inc"
-#   else
-#       error "USB_CFG_CLOCK_KHZ is not one of the supported crc-rates!"
-#   endif
-#else   /* USB_CFG_CHECK_CRC */
-#   if USB_CFG_CLOCK_KHZ == 12000
-#       include "usbdrvasm12.inc"
-#   elif USB_CFG_CLOCK_KHZ == 12800
-#       include "usbdrvasm128.inc"
-#   elif USB_CFG_CLOCK_KHZ == 15000
-#       include "usbdrvasm15.inc"
-#   elif USB_CFG_CLOCK_KHZ == 16000
-#       include "usbdrvasm16.inc"
-#   elif USB_CFG_CLOCK_KHZ == 16500
-#       include "usbdrvasm165.inc"
-#   elif USB_CFG_CLOCK_KHZ == 20000
-#       include "usbdrvasm20.inc"
-#   else
-#       error "USB_CFG_CLOCK_KHZ is not one of the supported non-crc-rates!"
-#   endif
-#endif /* USB_CFG_CHECK_CRC */
+#if USB_CFG_CLOCK_KHZ == 12000
+#   include "usbdrvasm12.inc"
+#elif USB_CFG_CLOCK_KHZ == 12800
+#   include "usbdrvasm128.inc"
+#elif USB_CFG_CLOCK_KHZ == 15000
+#   include "usbdrvasm15.inc"
+#elif USB_CFG_CLOCK_KHZ == 16000
+#   include "usbdrvasm16.inc"
+#elif USB_CFG_CLOCK_KHZ == 16500
+#   include "usbdrvasm165.inc"
+#elif USB_CFG_CLOCK_KHZ == 20000
+#   include "usbdrvasm20.inc"
+#else
+#   error "USB_CFG_CLOCK_KHZ is not one of the supported rates!"
+#endif
