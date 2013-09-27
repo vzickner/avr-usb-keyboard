@@ -28,7 +28,23 @@ publish any hardware using these IDs! This is for demonstration only!
 #include "oddebug.h"        /* This is also an example for using debug macros */
 #include "keys.h"
 
-#define NUM_KEYS    17
+#define XTAL        16e6                 // 16 MHz
+
+#define PHASE_A     (PINC & 1<<PC5)     // an Pinbelegung anpassen
+#define PHASE_B     (PINC & 1<<PC6)     // an Pinbelegung anpassen
+
+volatile int8_t enc_delta;              // Drehgeberbewegung zwischen
+                                        // zwei Auslesungen im Hauptprogramm
+
+// Drehgeber
+// Dekodertabelle für wackeligen Rastpunkt
+// halbe Auflösung
+const int8_t table[16] PROGMEM = {0,0,-1,0,0,0,0,1,1,0,0,0,0,-1,0,0};    
+ 
+// Dekodertabelle für normale Drehgeber
+// volle Auflösung
+//const int8_t table[16] PROGMEM = {0,1,-1,0,-1,0,0,1,1,0,0,-1,0,-1,1,0};    
+volatile uint8_t rotatingSet = 0;
 
 
 /* ------------------------------------------------------------------------- */
@@ -36,24 +52,24 @@ publish any hardware using these IDs! This is for demonstration only!
 /* ------------------------------------------------------------------------- */
 
 PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
-    0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
-    0x09, 0x06,                    // USAGE (Keyboard)
-    0xa1, 0x01,                    // COLLECTION (Application)
-    0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
-    0x19, 0xe0,                    //   USAGE_MINIMUM (Keyboard LeftControl)
-    0x29, 0xe7,                    //   USAGE_MAXIMUM (Keyboard Right GUI)
-    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,                    //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,                    //   REPORT_SIZE (1)
-    0x95, 0x08,                    //   REPORT_COUNT (8)
-    0x81, 0x02,                    //   INPUT (Data,Var,Abs)
-    0x95, 0x01,                    //   REPORT_COUNT (1)
-    0x75, 0x08,                    //   REPORT_SIZE (8)
-    0x25, 0x65,                    //   LOGICAL_MAXIMUM (101)
-    0x19, 0x00,                    //   USAGE_MINIMUM (Reserved (no event indicated))
-    0x29, 0x65,                    //   USAGE_MAXIMUM (Keyboard Application)
-    0x81, 0x00,                    //   INPUT (Data,Ary,Abs)
-    0xc0                           // END_COLLECTION
+	0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
+	0x09, 0x06,                    // USAGE (Keyboard)
+	0xa1, 0x01,                    // COLLECTION (Application)
+	0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
+	0x19, 0xe0,                    //   USAGE_MINIMUM (Keyboard LeftControl)
+	0x29, 0xe7,                    //   USAGE_MAXIMUM (Keyboard Right GUI)
+	0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+	0x25, 0x01,                    //   LOGICAL_MAXIMUM (1)
+	0x75, 0x01,                    //   REPORT_SIZE (1)
+	0x95, 0x08,                    //   REPORT_COUNT (8)
+	0x81, 0x02,                    //   INPUT (Data,Var,Abs)
+	0x95, 0x01,                    //   REPORT_COUNT (1)
+	0x75, 0x08,                    //   REPORT_SIZE (8)
+	0x25, 0x65,                    //   LOGICAL_MAXIMUM (101)
+	0x19, 0x00,                    //   USAGE_MINIMUM (Reserved (no event indicated))
+	0x29, 0x65,                    //   USAGE_MAXIMUM (Keyboard Application)
+	0x81, 0x00,                    //   INPUT (Data,Ary,Abs)
+	0xc0                           // END_COLLECTION
 };
 
 /* This is the same report descriptor as seen in a Logitech mouse. The data
@@ -71,96 +87,179 @@ typedef struct{
 static report_t reportBuffer;
 static int      sinus = 7 << 6, cosinus = 0;
 static uchar    idleRate;   /* repeat rate for keyboards, never used for mice */
+volatile uint8_t test = 0;
+volatile uint16_t counter = 0;
+volatile uint16_t counterRotate = 0;
 
+usbMsgLen_t usbFunctionSetup(uchar data[8]) {
+	usbRequest_t    *rq = (void *)data;
 
-/* ------------------------------------------------------------------------- */
-
-usbMsgLen_t usbFunctionSetup(uchar data[8])
-{
-usbRequest_t    *rq = (void *)data;
-
-    /* The following requests are never used. But since they are required by
-     * the specification, we implement them in this example.
-     */
-    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* class request type */
-        DBG1(0x50, &rq->bRequest, 1);   /* debug output: print our request */
-        if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
-            /* we only have one report type, so don't look at wValue */
-            usbMsgPtr = (void *)&reportBuffer;
-            return sizeof(reportBuffer);
-        }else if(rq->bRequest == USBRQ_HID_GET_IDLE){
-            usbMsgPtr = &idleRate;
-            return 1;
-        }else if(rq->bRequest == USBRQ_HID_SET_IDLE){
-            idleRate = rq->wValue.bytes[1];
-        }
-    }else{
-        /* no vendor specific requests implemented */
-    }
-    return 0;   /* default for not implemented requests: return no data back to host */
+	/* The following requests are never used. But since they are required by
+	 * the specification, we implement them in this example.
+	 */
+	if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* class request type */
+		DBG1(0x50, &rq->bRequest, 1);   /* debug output: print our request */
+		if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
+			/* we only have one report type, so don't look at wValue */
+			usbMsgPtr = (void *)&reportBuffer;
+			return sizeof(reportBuffer);
+		} else if(rq->bRequest == USBRQ_HID_GET_IDLE) {
+			usbMsgPtr = &idleRate;
+			return 1;
+		} else if(rq->bRequest == USBRQ_HID_SET_IDLE) {
+			idleRate = rq->wValue.bytes[1];
+		}
+	} else {
+		/* no vendor specific requests implemented */
+	}
+	return 0;   /* default for not implemented requests: return no data back to host */
 }
 
-static void buildReport(uchar key) {
-        /* This (not so elegant) cast saves us 10 bytes of program memory */
-	reportBuffer.mod = MOD_SHIFT_LEFT;
-	reportBuffer.key = KEY_B;
-//        *(int *)reportBuffer = pgm_read_word(keyReport[key]);
+
+ISR(TIMER0_OVF_vect) {
+	counter++;
+	counterRotate++;
+	uint8_t oldSet = rotatingSet;
+	rotatingSet = PHASE_A | PHASE_B;
+
+	if (oldSet > 0 && rotatingSet > 0 && rotatingSet != oldSet) {
+		if (oldSet > rotatingSet) {
+			//reportBuffer.key = KEY_Y;
+		} else {
+			//reportBuffer.key = KEY_W;
+		}
+	}
 }
-/* ------------------------------------------------------------------------- */
 
-int main(void)
+int8_t encode_read( void )         // Encoder auslesen
 {
-uchar   i;
+	int8_t val;
+ 
+	// atomarer Variablenzugriff  
+	cli();
+	val = enc_delta;
+	enc_delta = 0;
+	sei();
+	return val;
+}
 
-    wdt_enable(WDTO_1S);
-    /* Even if you don't use the watchdog, turn it off here. On newer devices,
-     * the status of the watchdog (on/off, period) is PRESERVED OVER RESET!
-     */
-    DBG1(0x00, 0, 0);       /* debug output: main starts */
-    /* RESET status: all port bits are inputs without pull-up.
-     * That's the way we need D+ and D-. Therefore we don't need any
-     * additional hardware initialization.
-     */
-    odDebugInit();
-    usbInit();
-    usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
-    i = 0;
-    while(--i){             /* fake USB disconnect for > 250 ms */
-        wdt_reset();
-        _delay_ms(1);
-    }
-    usbDeviceConnect();
-    sei();
-    DBG1(0x01, 0, 0);       /* debug output: main loop starts */
+int main(void) {
+	uchar i;
+
+	wdt_enable(WDTO_1S);
+	/* Even if you don't use the watchdog, turn it off here. On newer devices,
+	 * the status of the watchdog (on/off, period) is PRESERVED OVER RESET!
+	 */
+	DBG1(0x00, 0, 0);       /* debug output: main starts */
+	/* RESET status: all port bits are inputs without pull-up.
+	 * That's the way we need D+ and D-. Therefore we don't need any
+	 * additional hardware initialization.
+	 */
+	odDebugInit();
+	usbInit();
+	usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
+	i = 0;
+	while (--i) {             /* fake USB disconnect for > 250 ms */
+		wdt_reset();
+		_delay_ms(1);
+	}
+	usbDeviceConnect();
+
+	// Enable timer0
+	TCCR0 = (1<<CS10) | (1<<CS01) | (1<<CS00);     // CTC, XTAL / 64
+	TIMSK |= (1<<TOIE0);
+
+	sei();
+	DBG1(0x01, 0, 0);       /* debug output: main loop starts */
 	DDRC = 0x00;
 	DDRA = 0xff;
+	PORTA = 0x00 | (1<<PA7);
 
-    for(;;){                /* main event loop */
-        DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
-        wdt_reset();
-        usbPoll();
-	reportBuffer.mod = 0;
-	reportBuffer.key = 0;
+	int8_t rotateValue = 0;
+	uint8_t pinC = 0x1F;
+	uint8_t last = 0x1F;
+	uint8_t history[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+	uint8_t first = 1;
+	uint8_t use, j;
+	uint8_t historyPosition = 0;
+	uint8_t beep = 0;
+	uint8_t sendStack[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+	uint8_t sendStackSend = 0;
+	uint8_t sendStackAdd = 0;
 
-	if ((PINC & (1 << PC0)) == 0) {
-		reportBuffer.mod = MOD_SHIFT_LEFT;
-		reportBuffer.key = KEY_A;
-		PORTA = 0xff;
-	} else if ((PINC & (1 << PC1)) == 0) {
-		reportBuffer.mod = MOD_SHIFT_LEFT;
-		reportBuffer.key = KEY_B;
-		PORTA = 0xff;
-	} else {
-		PORTA = 0x00;
+	uint8_t rotateLast = 0x60;
+	uint8_t rotateC = 0;
+
+	for (;;) {                /* main event loop */
+		DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
+		wdt_reset();
+		usbPoll();
+
+		//reportBuffer.mod = MOD_SHIFT_LEFT;
+		//reportBuffer.key = KEY_A + (PINC & 0x0F);
+
+		if (counter > 0x3FF && counter < 0x4FF && beep == 1) {
+			PORTA |= (1<<PA6);
+		} else {
+			PORTA &= (0<<PA6);
+		}
+
+		history[(historyPosition++) & 0xF] = (PINC & 0x1F);
+		first = history[(historyPosition+1) & 0xF];
+		use = 1;
+		for (j=1; j < 16; j++) {
+			if (history[(historyPosition+1+j) & 0xF] != first) {
+				use = 0;
+				break;
+			}
+		}
+		if (use == 1) {
+			last = first;
+		}
+		if (last != pinC) {
+			sendStack[sendStackAdd] = KEY_A;
+			if (pinC != 0x1F) {
+//			PORTA |= (1<<PA6);
+				if (counter < 0x3FF) {
+					sendStack[sendStackAdd] = (pinC & 0x1F);
+				} else {
+					sendStack[sendStackAdd] = 0x20 + (pinC & 0x1F);
+				}
+				sendStackAdd = (sendStackAdd+1)&0x1F;
+				beep = 0;
+			} else {
+				beep = 1;
+			}
+			pinC = last;
+			counter = 0;
+		}
+
+		rotateC = PINC & 0x60;
+		if (rotateC != rotateLast) {
+			if (rotateLast == 0x40 && rotateC == 0x60) {
+				sendStack[sendStackAdd] = KEY_H;
+				sendStackAdd = (sendStackAdd+1)&0x1F;
+			} else if (rotateLast == 0x20 && rotateC == 0x60) {
+				sendStack[sendStackAdd] = KEY_G;
+				sendStackAdd = (sendStackAdd+1)&0x1F;
+			}
+			rotateLast = rotateC;
+		}
+
+		if(usbInterruptIsReady()) {
+			reportBuffer.mod = 0;
+			reportBuffer.key = 0;
+
+			if (sendStackSend != sendStackAdd) {
+				reportBuffer.mod = MOD_SHIFT_LEFT;
+				reportBuffer.key = sendStack[sendStackSend];
+				sendStackSend = (sendStackSend+1)&0x1F;
+			}
+			DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
+			usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));
+		}
 	}
-
-        if(usbInterruptIsReady()) {
-            /* called after every poll of the interrupt endpoint */
-            DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
-            usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));
-        }
-    }
-    return 0;
+	return 0;
 }
 
 /* ------------------------------------------------------------------------- */
