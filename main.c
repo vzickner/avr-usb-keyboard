@@ -44,7 +44,8 @@ const int8_t table[16] PROGMEM = {0,0,-1,0,0,0,0,1,1,0,0,0,0,-1,0,0};
 // Dekodertabelle für normale Drehgeber
 // volle Auflösung
 //const int8_t table[16] PROGMEM = {0,1,-1,0,-1,0,0,1,1,0,0,-1,0,-1,1,0};    
-volatile uint8_t rotatingSet = 0;
+volatile uint8_t counterLoop = 0;
+volatile uint8_t counterSaved = 0;
 
 
 /* ------------------------------------------------------------------------- */
@@ -98,7 +99,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 	 * the specification, we implement them in this example.
 	 */
 	if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* class request type */
-		DBG1(0x50, &rq->bRequest, 1);   /* debug output: print our request */
 		if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
 			/* we only have one report type, so don't look at wValue */
 			usbMsgPtr = (void *)&reportBuffer;
@@ -119,15 +119,9 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 ISR(TIMER0_OVF_vect) {
 	counter++;
 	counterRotate++;
-	uint8_t oldSet = rotatingSet;
-	rotatingSet = PHASE_A | PHASE_B;
 
-	if (oldSet > 0 && rotatingSet > 0 && rotatingSet != oldSet) {
-		if (oldSet > rotatingSet) {
-			//reportBuffer.key = KEY_Y;
-		} else {
-			//reportBuffer.key = KEY_W;
-		}
+	if ((PINC & 0x06) == 0) {
+		asm volatile ("jmp 0");
 	}
 }
 
@@ -145,16 +139,23 @@ int8_t encode_read( void )         // Encoder auslesen
 
 int main(void) {
 	uchar i;
+	DDRC = 0x00;
+	DDRA = 0xff;
+	PORTA = 0x00;
+
+	while ((PINC & 0x01) == 1) {
+	}
+	PORTA = 0xC0;
 
 	wdt_enable(WDTO_1S);
 	/* Even if you don't use the watchdog, turn it off here. On newer devices,
 	 * the status of the watchdog (on/off, period) is PRESERVED OVER RESET!
 	 */
-	DBG1(0x00, 0, 0);       /* debug output: main starts */
 	/* RESET status: all port bits are inputs without pull-up.
 	 * That's the way we need D+ and D-. Therefore we don't need any
 	 * additional hardware initialization.
 	 */
+
 	odDebugInit();
 	usbInit();
 	usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
@@ -165,15 +166,12 @@ int main(void) {
 	}
 	usbDeviceConnect();
 
+
 	// Enable timer0
 	TCCR0 = (1<<CS10) | (1<<CS01) | (1<<CS00);     // CTC, XTAL / 64
 	TIMSK |= (1<<TOIE0);
 
 	sei();
-	DBG1(0x01, 0, 0);       /* debug output: main loop starts */
-	DDRC = 0x00;
-	DDRA = 0xff;
-	PORTA = 0x00;
 
 	int8_t rotateValue = 0;
 	uint8_t pinC = 0x1F;
@@ -191,7 +189,6 @@ int main(void) {
 	uint8_t rotateC = 0;
 
 	for (;;) {                /* main event loop */
-		DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
 		wdt_reset();
 		usbPoll();
 
@@ -201,7 +198,7 @@ int main(void) {
 		if (counter > 0x1FF && counter < 0x2FF && beep == 1) {
 			PORTA |= (1<<PA6);
 		} else {
-			PORTA &= (0<<PA6);
+			PORTA &= ~(1<<PA6);
 		}
 
 		history[(historyPosition++) & 0xF] = (PINC & 0x1F);
@@ -213,18 +210,11 @@ int main(void) {
 				break;
 			}
 		}
+
 		if (use == 1) {
 			last = first;
 			if (counter > 0x1FF && beep == 0) {
-				if (last == 0x1C) {
-					PORTA |= (1<<PA6);
-					beep = 1;
-					PORTA &= (0<<PA7);
-					_delay_ms(1);
-					_delay_ms(1);
-					_delay_ms(1);
-					PORTA |= (1<<PA7);
-				}
+
 				if (last == 0x13) {
 					PORTA |= (1<<PA6);
 					beep = 1;
@@ -255,9 +245,15 @@ int main(void) {
 		if (rotateC != rotateLast) {
 			if (rotateLast == 0x40 && rotateC == 0x60) {
 				sendStack[sendStackAdd] = 0x40;
+				if (last == 0x0F) {
+					sendStack[sendStackAdd] = 0x42;
+				}
 				sendStackAdd = (sendStackAdd+1)&0x03;
 			} else if (rotateLast == 0x20 && rotateC == 0x60) {
 				sendStack[sendStackAdd] = 0x41;
+				if (last == 0x0F) {
+					sendStack[sendStackAdd] = 0x43;
+				}
 				sendStackAdd = (sendStackAdd+1)&0x03;
 			}
 			rotateLast = rotateC;
@@ -306,8 +302,8 @@ int main(void) {
 					reportBuffer.key = KEY_POS1;
 					break;
 				case 0x2F: // button 5 long
-					reportBuffer.mod = 0;
-					reportBuffer.key = KEY_RETURN;
+					reportBuffer.mod = MOD_ALT_LEFT;
+					reportBuffer.key = KEY_LEFT_ARROW;
 					break;
 				case 0x41: // rotate right
 					reportBuffer.mod = 0;
@@ -317,6 +313,14 @@ int main(void) {
 					reportBuffer.mod = MOD_SHIFT_LEFT;
 					reportBuffer.key = KEY_TAB;
 					break;
+				case 0x42: // rotate left pressed
+					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_SHIFT_LEFT;
+					reportBuffer.key = KEY_PLUS;
+					break;
+				case 0x43: // rotate right pressed
+					reportBuffer.mod = MOD_CONTROL_LEFT;
+					reportBuffer.key = KEY_MINUS;
+					break;
 				case 0x50: // shutdown
 					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_ALT_LEFT;
 					reportBuffer.key = KEY_BACKSPACE;
@@ -324,9 +328,9 @@ int main(void) {
 				}
 				sendStackSend = (sendStackSend+1)&0x03;
 			}
-			DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
 			usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));
 		}
+		counterLoop++;
 	}
 	return 0;
 }

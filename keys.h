@@ -61,6 +61,9 @@
 #define KEY_TAB	0x2b
 #define KEY_DOWN_ARROW	0x51
 #define KEY_UP_ARROW	0x52
+#define KEY_LEFT_ARROW	0x50
 #define KEY_RETURN	0x28
 #define KEY_POS1	0x4A
 #define KEY_BACKSPACE	0x2A
+#define KEY_PLUS	0x2E
+#define KEY_MINUS	0x2D
