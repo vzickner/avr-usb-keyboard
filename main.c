@@ -36,16 +36,12 @@ publish any hardware using these IDs! This is for demonstration only!
 volatile int8_t enc_delta;              // Drehgeberbewegung zwischen
                                         // zwei Auslesungen im Hauptprogramm
 
-// Drehgeber
-// Dekodertabelle für wackeligen Rastpunkt
-// halbe Auflösung
-const int8_t table[16] PROGMEM = {0,0,-1,0,0,0,0,1,1,0,0,0,0,-1,0,0};    
- 
-// Dekodertabelle für normale Drehgeber
-// volle Auflösung
-//const int8_t table[16] PROGMEM = {0,1,-1,0,-1,0,0,1,1,0,0,-1,0,-1,1,0};    
 volatile uint8_t counterLoop = 0;
 volatile uint8_t counterSaved = 0;
+	
+volatile uint8_t sendStack[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+volatile uint8_t sendStackSend = 0;
+volatile uint8_t sendStackAdd = 0;
 
 
 /* ------------------------------------------------------------------------- */
@@ -86,7 +82,6 @@ typedef struct{
 }report_t;
 
 static report_t reportBuffer;
-static int      sinus = 7 << 6, cosinus = 0;
 static uchar    idleRate;   /* repeat rate for keyboards, never used for mice */
 volatile uint8_t test = 0;
 volatile uint16_t counter = 0;
@@ -125,6 +120,18 @@ ISR(TIMER0_OVF_vect) {
 	}
 }
 
+ISR(INT1_vect) {
+	cli();
+	if ((PIND & (1<<PD4)) == 0) { // rotate right
+		sendStack[sendStackAdd] = 0x41;
+		sendStackAdd = (sendStackAdd+1)&0x03;
+	} else { // rotate left
+		sendStack[sendStackAdd] = 0x40;
+		sendStackAdd = (sendStackAdd+1)&0x03;
+	}
+	sei();
+}
+
 int8_t encode_read( void )         // Encoder auslesen
 {
 	int8_t val;
@@ -142,6 +149,7 @@ int main(void) {
 	DDRC = 0x00;
 	DDRA = 0xff;
 	PORTA = 0x00;
+	DDRD &= ~(1<<PD3 | 1<<PD4);
 
 	while ((PINC & 0x01) == 1) {
 	}
@@ -171,9 +179,13 @@ int main(void) {
 	TCCR0 = (1<<CS10) | (1<<CS01) | (1<<CS00);     // CTC, XTAL / 64
 	TIMSK |= (1<<TOIE0);
 
+	// Enable INT1 for falling edges
+	MCUCR |= (1<<ISC11);
+	MCUCR &= ~(1<<ISC10);
+	GICR |= (1<<INT1);
+
 	sei();
 
-	int8_t rotateValue = 0;
 	uint8_t pinC = 0x1F;
 	uint8_t last = 0x1F;
 	uint8_t history[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
@@ -181,12 +193,7 @@ int main(void) {
 	uint8_t use, j;
 	uint8_t historyPosition = 0;
 	uint8_t beep = 0;
-	uint8_t sendStack[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-	uint8_t sendStackSend = 0;
-	uint8_t sendStackAdd = 0;
 
-	uint8_t rotateLast = 0x60;
-	uint8_t rotateC = 0;
 
 	for (;;) {                /* main event loop */
 		wdt_reset();
@@ -241,24 +248,6 @@ int main(void) {
 			counter = 0;
 		}
 
-		rotateC = PINC & 0x60;
-		if (rotateC != rotateLast) {
-			if (rotateLast == 0x40 && rotateC == 0x60) {
-				sendStack[sendStackAdd] = 0x40;
-				if (last == 0x0F) {
-					sendStack[sendStackAdd] = 0x42;
-				}
-				sendStackAdd = (sendStackAdd+1)&0x03;
-			} else if (rotateLast == 0x20 && rotateC == 0x60) {
-				sendStack[sendStackAdd] = 0x41;
-				if (last == 0x0F) {
-					sendStack[sendStackAdd] = 0x43;
-				}
-				sendStackAdd = (sendStackAdd+1)&0x03;
-			}
-			rotateLast = rotateC;
-		}
-
 		if(usbInterruptIsReady()) {
 			reportBuffer.mod = 0;
 			reportBuffer.key = 0;
@@ -306,20 +295,22 @@ int main(void) {
 					reportBuffer.key = KEY_LEFT_ARROW;
 					break;
 				case 0x41: // rotate right
-					reportBuffer.mod = 0;
-					reportBuffer.key = KEY_TAB;
+					if (last == 0x0F) { // pressed
+						reportBuffer.mod = 0;
+						reportBuffer.key = KEY_TAB;
+					} else {
+						reportBuffer.mod = MOD_CONTROL_LEFT;
+						reportBuffer.key = KEY_MINUS;
+					}
 					break;
 				case 0x40: // rotate left
-					reportBuffer.mod = MOD_SHIFT_LEFT;
-					reportBuffer.key = KEY_TAB;
-					break;
-				case 0x42: // rotate left pressed
-					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_SHIFT_LEFT;
-					reportBuffer.key = KEY_PLUS;
-					break;
-				case 0x43: // rotate right pressed
-					reportBuffer.mod = MOD_CONTROL_LEFT;
-					reportBuffer.key = KEY_MINUS;
+					if (last == 0x0F) { // pressed
+						reportBuffer.mod = MOD_CONTROL_LEFT | MOD_SHIFT_LEFT;
+						reportBuffer.key = KEY_PLUS;
+					} else {
+						reportBuffer.mod = MOD_SHIFT_LEFT;
+						reportBuffer.key = KEY_TAB;
+					}
 					break;
 				case 0x50: // shutdown
 					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_ALT_LEFT;
