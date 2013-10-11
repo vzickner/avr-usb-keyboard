@@ -52,7 +52,7 @@ volatile uint8_t counterSaved = 0;
 /* ----------------------------- USB interface ----------------------------- */
 /* ------------------------------------------------------------------------- */
 
-PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
+const PROGMEM char usbHidReportDescriptor[35] = {   /* USB report descriptor */
 	0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
 	0x09, 0x06,                    // USAGE (Keyboard)
 	0xa1, 0x01,                    // COLLECTION (Application)

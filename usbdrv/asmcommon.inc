@@ -1,11 +1,10 @@
 /* Name: asmcommon.inc
- * Project: AVR USB driver
+ * Project: V-USB, virtual USB port for Atmel's(r) AVR(r) microcontrollers
  * Author: Christian Starkjohann
  * Creation Date: 2007-11-05
  * Tabsize: 4
  * Copyright: (c) 2007 by OBJECTIVE DEVELOPMENT Software GmbH
  * License: GNU GPL v2 (see License.txt), GNU GPL v3 or proprietary (CommercialLicense.txt)
- * Revision: $Id$
  */
 
 /* Do not link this file! Link usbdrvasm.S instead, which includes the
@@ -103,6 +102,9 @@ sofError:
     reti
 
 handleData:
+#if USB_CFG_CHECK_CRC
+    CRC_CLEANUP_AND_CHECK       ; jumps to ignorePacket if CRC error
+#endif
     lds     shift, usbCurrentTok;[18]
     tst     shift               ;[20]
     breq    doReturn            ;[21]
