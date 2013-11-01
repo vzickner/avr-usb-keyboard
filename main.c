@@ -122,12 +122,16 @@ ISR(TIMER0_OVF_vect) {
 
 ISR(INT1_vect) {
 	cli();
-	if ((PIND & (1<<PD4)) == 0) { // rotate right
+	// PA4 PA5
+	if ((PIND & 0x10) == 0) { // rotate right
+	//if ((PIND & (1<<PD4)) == 0) { // rotate right
 		sendStack[sendStackAdd] = 0x41;
 		sendStackAdd = (sendStackAdd+1)&0x03;
+		//PORTA ^= 1 << PA4;
 	} else { // rotate left
 		sendStack[sendStackAdd] = 0x40;
 		sendStackAdd = (sendStackAdd+1)&0x03;
+		//PORTA ^= 1 << PA5;
 	}
 	sei();
 }
@@ -153,7 +157,7 @@ int main(void) {
 
 	while ((PINC & 0x01) == 1) {
 	}
-	PORTA = 0xC0;
+	PORTA = 0xF0;
 
 	wdt_enable(WDTO_1S);
 	/* Even if you don't use the watchdog, turn it off here. On newer devices,
@@ -295,22 +299,12 @@ int main(void) {
 					reportBuffer.key = KEY_LEFT_ARROW;
 					break;
 				case 0x41: // rotate right
-					if (last == 0x0F) { // pressed
-						reportBuffer.mod = 0;
-						reportBuffer.key = KEY_TAB;
-					} else {
-						reportBuffer.mod = MOD_CONTROL_LEFT;
-						reportBuffer.key = KEY_MINUS;
-					}
+					reportBuffer.mod = 0;
+					reportBuffer.key = KEY_TAB;
 					break;
 				case 0x40: // rotate left
-					if (last == 0x0F) { // pressed
-						reportBuffer.mod = MOD_CONTROL_LEFT | MOD_SHIFT_LEFT;
-						reportBuffer.key = KEY_PLUS;
-					} else {
-						reportBuffer.mod = MOD_SHIFT_LEFT;
-						reportBuffer.key = KEY_TAB;
-					}
+					reportBuffer.mod = MOD_SHIFT_LEFT;
+					reportBuffer.key = KEY_TAB;
 					break;
 				case 0x50: // shutdown
 					reportBuffer.mod = MOD_CONTROL_LEFT | MOD_ALT_LEFT;
